@@ -1,6 +1,6 @@
 import torch.nn as nn
 from torch.autograd import Variable
-
+import torch
 
 class EncoderModel(nn.Module):
     """Model include a transducer to predict at each time steps"""
@@ -15,6 +15,7 @@ class EncoderModel(nn.Module):
         print ("self.embed:", self.embed)
         self.rnn_type = rnn_type
         print ("self.rnn_type:", self.rnn_type)
+        self.embeded = None
 
         # Select RNN cell type from LSTM, GRU, and Elman
         if rnn_type == 'LSTM':
@@ -36,12 +37,12 @@ class EncoderModel(nn.Module):
         self.bi = bi
         print ("self.bi:", self.bi)
         if pretrained_vectors is not None:
-            print ("pretrained_vectors is None")
+            print ("pretrained_vectors is not None")
             for x, word in enumerate(word_dict.idx2word):
                 if word in pretrained_vectors.stoi:
                     pt_idx = pretrained_vectors.stoi[word]
-                    #print ("pt_idx:", pt_idx)
                     self.embed.weight[x].data.copy_(pretrained_vectors.vectors[pt_idx])
+        print ("== end init for EncoderModel")
 
     def init_weights(self):
         init_range = 0.1
@@ -49,11 +50,15 @@ class EncoderModel(nn.Module):
 
     def forward(self, input, hidden):
         embeded = self.drop(self.embed(input))
-        self.rnn.flatten_parameters()
+        self.embeded = embeded
+        #self.rnn.flatten_parameters()
         output, hidden = self.rnn(embeded, hidden)
         output = self.drop(output)
         return output, hidden
     
+    def get_embeded(self):
+        return self.embeded
+
     def init_hidden(self, batch_size):
         weight = next(self.parameters()).data
         return (Variable(weight.new(self.nlayers*(1+int(self.bi)), 
@@ -119,6 +124,7 @@ class JointModel(nn.Module):
         print ("self.bi:", self.bi)
         self.train_mode = train_mode
         print ("self.train_mode:", self.train_mode)
+
         # According to train type, take arguments
         if train_mode == 'Joint':
             print ("Joint")
@@ -161,13 +167,17 @@ class JointModel(nn.Module):
                                         self.nlayers2 - self.nlayers1,
                                         bidirectional=bi)
                     print ("self.rnn2:", self.rnn2)
+                    self.fc1 = nn.Linear(nhid + self.emsize, nhid * (1 + int(bi)))
+                    self.fc2 = nn.Linear(nhid*2 + self.emsize, nhid * (1 + int(bi)))
+                    print ("fc:", self.fc1)
+
                 elif rnn_type == 'GRU':
                     self.rnn2 = nn.GRU(nhid * (1 + int(bi)), nhid,
                                        self.nlayers2 - self.nlayers1,
                                        bidirectional=bi)
                     print ("self.rnn2:", self.rnn2)
                 else:
-                    self.rnn2 = nn.RNN(nhid * (1 + int(bi)), nhid,
+                    self.rnn2 = nn.RNN( (nhid + self.emsize) * (1 + int(bi)), nhid,
                                        self.nlayers2 - self.nlayers1,
                                        bidirectional=bi)
                 print ("self.rnn2:", self.rnn2)
@@ -226,11 +236,12 @@ class JointModel(nn.Module):
                 print ("self.nlayers3:", self.nlayers3)
                 print ("self.nlayers1 == self.nlayers2 == self.nlayers3")
 
+                #we add skip connections, but for first rnn, the input is the self.embed already
                 logits, shared_hidden = self.rnn(input, hidden[0]) #lower layer
                 print ("logits:", logits.shape)
                 print ("shared_hidden:", len(shared_hidden))
 
-                outputs_pos = self.linear1(logits) #lower layer has output labels, pos-tags
+                outputs_pos = self.linear1(logits) #lower layer has as output labels, pos-tags
                 print ("outputs_pos:", outputs_pos.shape)
 
                 outputs_chunk = self.linear2(logits) #same lower layer has output labels, chunk labels as well
@@ -250,6 +261,7 @@ class JointModel(nn.Module):
                 #see https://stackoverflow.com/questions/48302810/whats-the-difference-between-hidden-and-output-in-pytorch-lstm
 
                 # POS tagging task
+                #here input are the embeddings
                 logits_pos, hidden_pos = self.rnn1(input, hidden[0])
                 if (self.rnn_type == 'LSTM'):
                     hidden_pos_hn = hidden_pos[0]
@@ -260,11 +272,21 @@ class JointModel(nn.Module):
                     print("hidden_pos:", hidden_pos.shape)
                 print ("logits_pos:", logits_pos.shape)
 
-                self.rnn2.flatten_parameters()
+                #self.rnn2.flatten_parameters()
                 print ("self.rnn2, flatten params:", self.rnn2)
 
                 # chunking using POS
-                logits_chunk, hidden_chunk = self.rnn2(logits_pos, hidden[1])
+                #we add skip connections, adding the self.embed
+                embeded = self.rnn1.get_embeded()
+                print ("type of embeded: ", type(embeded))
+                print("embeded:", embeded.shape)
+
+                emb_con = torch.cat((embeded, logits_pos), dim = 2)
+                print ("emb_con:", emb_con.shape)
+                emb_con_fc_tanh = torch.tanh(self.fc1(emb_con))
+                print ("emb_con_fc_tanh:", emb_con_fc_tanh.shape)
+
+                logits_chunk, hidden_chunk = self.rnn2(emb_con_fc_tanh, hidden[1])
                 if (self.rnn_type == 'LSTM'):
                     print ("hidden_chunk_hn:", hidden_chunk[0].shape) #h_n
                     print ("hidden_chunk_cn:", hidden_chunk[1].shape) #c_n
@@ -272,17 +294,23 @@ class JointModel(nn.Module):
                     print("hidden_chunk:", hidden_pos.shape)
                 print ("logits_chunk:", logits_chunk.shape)
 
-                self.rnn3.flatten_parameters()
+                #self.rnn3.flatten_parameters()
                 print ("self.rnn3, flatten params:", self.rnn3)
 
                 # NER using chunk
-                logits_ner, hidden_ner = self.rnn3(logits_chunk, hidden[2])
+                emb_con1 = torch.cat((embeded, logits_chunk), dim = 2)
+                emb_con1 = torch.cat((emb_con1, logits_pos), dim = 2)
+                print ("emb_con1:", emb_con1.shape)
+                emb_con1_fc_tanh = torch.tanh(self.fc2(emb_con1))
+                print ("emb_con1_fc_tanh:", emb_con1_fc_tanh.shape)
+
+                logits_ner, hidden_ner = self.rnn3(emb_con1_fc_tanh, hidden[2])
                 if (self.rnn_type == 'LSTM'):
                     print ("hidden_ner_hn:", hidden_ner[0].shape) #h_n
                     print ("hidden_ner_cn:", hidden_ner[1].shape) #c_n
                 else:
                     print("hidden_ner:", hidden_pos.shape)
-                print ("logits_ner:", logits_pos.shape)
+                print ("logits_ner:", logits_ner.shape)
 
                 outputs_pos = self.linear1(logits_pos)
                 print ("outputs_pos:", outputs_pos.shape)
