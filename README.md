@@ -9,9 +9,11 @@ As below, we build the model, normally several layers of RNN above embedding. La
 
 ## Install
 
-Requires PyTorch 0.3.1 as well as torchtext. Follow install below (assumes you have a conda environment):
+Tested with PyTorch version: '1.1.0'. 
+Requires torchtext. Follow install below (assumes you have a conda environment):
 ```bash
-conda install pytorch=0.3.1 -c pytorch
+outdated command: conda install pytorch=0.3.1 -c pytorch
+Find the command you need from here: https://pytorch.org/get-started/locally/
 pip install torchtext==0.2.3
 ```
 We highly suggest using a CUDA based machine.
