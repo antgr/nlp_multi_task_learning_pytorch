@@ -35,7 +35,7 @@ do
             --bi \
             --save "./result/chunk_model_embed_$emsize"
 
-    echo "NER"
+    echo "=============NER================================="
     python main.py --data $1 \
             --emsize $emsize \
             --npos_layers 0 \
@@ -118,9 +118,8 @@ python main.py --data $1 \
         --bi \
         --save "./result/chunk_model_glove_embed"
 
-echo "NER"
-python main.py --data './data' \
-        --emsize 256 \
+echo "======================NER===================="
+python main.py --data $1 \
         --npos_layers 0 \
         --nchunk_layers 0 \
         --nner_layers 2 \
@@ -135,7 +134,7 @@ python main.py --data './data' \
         --bi \
         --save './result/ner_model_glove_embed'
 
-echo "Joint Training on the same level"
+echo "====Joint Training on the same level"
 python main.py --data $1 \
         --npos_layers 2 \
         --nchunk_layers 2 \

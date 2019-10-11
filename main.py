@@ -7,6 +7,7 @@ from torch import optim
 from data import Corpus
 from model import *
 from util import *
+from sklearn.metrics import classification_report
 
 ###############################################################################
 # Set Parameters
@@ -63,7 +64,7 @@ torch.cuda.manual_seed_all(args.seed)
 # Load Data
 ###############################################################################
 corpus_path = args.save.strip() + '_corpus.pt'
-print('Loading corpus...')
+#print('Loading corpus...')
 if os.path.exists(corpus_path):
     corpus = torch.load(corpus_path)
 else:
@@ -77,13 +78,13 @@ else:
 def train(loss_log):
     model.train()
     if args.train_mode == 'Joint':
-        print ("Joint")
+        #print ("Joint")
         target_data = (corpus.pos_train, corpus.chunk_train, corpus.ner_train,)
     elif args.train_mode == 'POS':
-        print ("POS")
+        #print ("POS")
         target_data = (corpus.pos_train, )
     elif args.train_mode == 'Chunk':
-        print ("Chunk")
+        #print ("Chunk")
         target_data = (corpus.chunk_train, )
     elif args.train_mode == 'NER':
         target_data = (corpus.ner_train,)
@@ -92,48 +93,48 @@ def train(loss_log):
     total_loss = 0
     start_time = time.time()
     n_iteration = corpus.word_train.size(0) // (args.batch_size*args.seq_len) 
-    print ("number of iterations ", n_iteration) 
+    #print ("number of iterations ", n_iteration) 
     iteration = 0
     for X, ys in get_batch(corpus.word_train, *target_data, batch_size=args.batch_size,
                            seq_len=args.seq_len, cuda=args.cuda):
-        print ("X:",X.shape)
-        print ("y:", len(ys))
+        #print ("X:",X.shape)
+        #print ("y:", len(ys))
         iteration += 1
         model.zero_grad()
         if args.train_mode == 'Joint':
             if args.npos_layers == args.nchunk_layers == args.nner_layers:
-                print ("Joint in same layer")
+                #print ("Joint in same layer")
                 hidden = model.rnn.init_hidden(args.batch_size)
                 outputs1, outputs2, outputs3, hidden = model(X, hidden)
             else:
-                print ("Joint in different layers")
+                #print ("Joint in different layers")
                 hidden1 = model.rnn1.init_hidden(args.batch_size)
-                print("init hidden1:", hidden1[0].shape, hidden1[1].shape )
+                #print("init hidden1:", hidden1[0].shape, hidden1[1].shape )
                 hidden2 = model.init_rnn2_hidden(args.batch_size)
-                print("init hidden2:", hidden2[0].shape, hidden2[1].shape )
+                #print("init hidden2:", hidden2[0].shape, hidden2[1].shape )
                 hidden3 = model.init_rnn3_hidden(args.batch_size)
-                print("init hidden3:", hidden3[0].shape, hidden3[1].shape )
+                #print("init hidden3:", hidden3[0].shape, hidden3[1].shape )
                 outputs1, outputs2, outputs3,  hidden1, hidden2, hidden3 = model(X, hidden1, hidden2, hidden3)
-                print ("returned: outputs1, outputs2, outputs3, hidden1, hidden2, hidden3")
+                #print ("returned: outputs1, outputs2, outputs3, hidden1, hidden2, hidden3")
             loss1 = criterion(outputs1.view(-1, npos_tags), ys[0].view(-1))
-            print ("outputs1.view(-1, npos_tags):", outputs1.view(-1, npos_tags).shape)
-            print ("ys[0].view(-1):", ys[0].view(-1).shape)
-            print ("loss1:", loss1)
+            #print ("outputs1.view(-1, npos_tags):", outputs1.view(-1, npos_tags).shape)
+            #print ("ys[0].view(-1):", ys[0].view(-1).shape)
+            #print ("loss1:", loss1)
             loss2 = criterion(outputs2.view(-1, nchunk_tags), ys[1].view(-1))
-            print ("loss2:", loss2)
+            #print ("loss2:", loss2)
             loss3 = criterion(outputs3.view(-1, nner_tags), ys[2].view(-1))
-            print ("loss3:", loss3)
+            #print ("loss3:", loss3)
             loss = loss1 + loss2 + loss3
-            print ("loss:", loss)
+            #print ("loss:", loss)
         else:
             #print ("Not Joint")
             hidden = model.rnn.init_hidden(args.batch_size)
-            if iteration % args.log_interval == 0:
-                print ("hidden", hidden[0].shape, hidden[1].shape)
+            #if iteration % args.log_interval == 0:
+                #print ("hidden", hidden[0].shape, hidden[1].shape)
             outputs, hidden = model(X, hidden)
             loss = criterion(outputs.view(-1, ntags), ys[0].view(-1))
-            if iteration % args.log_interval == 0:
-                print ("loss:", loss)
+            #if iteration % args.log_interval == 0:
+            #    print ("loss:", loss)
 
         loss.backward() 
         
@@ -158,11 +159,13 @@ def train(loss_log):
 
 def evaluate(source, target):
     model.eval()
-    print ("evaluate")
+    #print ("evaluate")
     n_iteration = source.size(0) // (args.batch_size*args.seq_len)
     total_loss = 0
     for X_val, y_vals in get_batch(source, *target, batch_size=args.batch_size,
                            seq_len=args.seq_len, cuda=args.cuda, evalu=True):
+        #print ("X_val: ", X_val.shape)
+        #print ("y_vals: ", y_vals)
         if args.train_mode == 'Joint':
             if args.npos_layers == args.nchunk_layers:
                 hidden = model.rnn.init_hidden(args.batch_size)
@@ -188,7 +191,24 @@ def evaluate(source, target):
 
             accuracy1 = equal1 / (y_vals[0].size(0) * y_vals[0].size(1))
             accuracy2 = equal2 / (y_vals[1].size(0) * y_vals[1].size(1))
-            accuracy3 = equal3 / (y_vals[2].size(0) * y_vals[2].size(1))
+            accuracy3 = equal3 / (y_vals[2].size(0) * y_vals[2].size(1)) #TODO: classification report
+            #print ("y_pred: ", pred3.squeeze(2).shape)
+            y_pred = pred3.squeeze(2).tolist()
+            #print ("y_pred: ", y_pred)
+            y_true = y_vals[2].data.tolist()
+            #print ("y_vals[2]: ", y_vals[2].shape)
+            #print ("y_true: ", y_true)
+            print ("==classification_report==")
+            print ("Joint case")
+            if args.npos_layers == args.nchunk_layers == args.nner_layers:
+                print ("SAME LAYER")
+            else:
+                print ("hierarchical!!!!")
+            print ("args.train_mode: ", args.train_mode)
+            print ("args.emsize: ", args.emsize)
+            flatten_y_true = [elem for sub in y_true for elem in sub]
+            flatten_y_pred = [elem for sub in y_pred for elem in sub]
+            print(classification_report(flatten_y_true, flatten_y_pred)) 
 
             accuracy1_tensor = torch.tensor([accuracy1], dtype=torch.float64)
             accuracy2_tensor = torch.tensor([accuracy2], dtype=torch.float64)
@@ -200,10 +220,25 @@ def evaluate(source, target):
             outputs, hidden = model(X_val, hidden)
             loss = criterion(outputs.view(-1, ntags), y_vals[0].view(-1))
             _, pred = outputs.data.topk(1)
-            accuracy = torch.sum(pred.squeeze(2) == y_vals[0].data) / (y_vals[0].size(0) * y_vals[0].size(1))
-            print ("evaluate/accuracy:", accuracy)
+            equal1 = torch.sum(pred.squeeze(2) == y_vals[0].data).item()
+
+            y_pred = pred.squeeze(2).tolist()
+            y_true = y_vals[0].data.tolist()
+
+            flatten_y_true = [elem for sub in y_true for elem in sub]
+            flatten_y_pred = [elem for sub in y_pred for elem in sub]
+            
+            print ("==classification_reportclassification_report==")
+            print ("NOT Joint case")
+            print ("args.train_mode: ", args.train_mode)
+            print(classification_report(flatten_y_true, flatten_y_pred))
+
+            accuracy1 = equal1 / (y_vals[0].size(0) * y_vals[0].size(1))
+            accuracy1_tensor = torch.tensor([accuracy1], dtype=torch.float64)
+            accuracy = accuracy1_tensor
+            print ("evaluate/accuracy:", accuracy.item())
         total_loss += loss
-    print ("end evaluate")
+    #print ("end evaluate")
     return total_loss/n_iteration, accuracy
 
 
@@ -223,28 +258,28 @@ for i in range(args.test_times):
     if args.pretrained_embeddings:
         import torchtext
         pretrained_embeddings = torchtext.vocab.GloVe()
-        print ("pretrained_embeddings: ", pretrained_embeddings.shape)
+        #print ("pretrained_embeddings: ", pretrained_embeddings.shape)
     if args.train_mode == 'Joint':
         model = JointModel(nwords, args.emsize, args.nhid, npos_tags, args.npos_layers,
                            nchunk_tags, args.nchunk_layers, nner_tags, args.nner_layers, args.dropout, bi=args.bi,
                            train_mode=args.train_mode, pretrained_vectors=pretrained_embeddings, vocab=corpus.word_dict)
-        print ("model: ", model)
+        #print ("model: ", model)
     else:
         if args.train_mode == 'POS':
             ntags = npos_tags
-            print ("ntags (POS):", ntags)
+            #print ("ntags (POS):", ntags)
             nlayers = args.npos_layers
-            print ("nlayers (POS):", nlayers)
+            #print ("nlayers (POS):", nlayers)
         elif args.train_mode == 'Chunk':
             ntags = nchunk_tags
-            print ("ntags (Chunk):", ntags)
+            #print ("ntags (Chunk):", ntags)
             nlayers = args.nchunk_layers
-            print ("nlayers (Chunk):", nlayers)
+            #print ("nlayers (Chunk):", nlayers)
         elif args.train_mode == 'NER':
             ntags = nner_tags
-            print ("ntags (NER):", ntags)
+            #print ("ntags (NER):", ntags)
             nlayers = args.nner_layers
-            print ("nlayers (NER):", nlayers)
+            #print ("nlayers (NER):", nlayers)
         model = JointModel(nwords, args.emsize, args.nhid, ntags, nlayers,
                            args.dropout, bi=args.bi, train_mode=args.train_mode,
                            pretrained_vectors=pretrained_embeddings, vocab=corpus.word_dict)
@@ -264,10 +299,10 @@ for i in range(args.test_times):
     try:
         for epoch in range(1, args.epochs+1):
             epoch_start_time = time.time()
-            print('Begin training...')
+            #print('Begin training...')
             loss_log = train(loss_log)
             # Evaluation
-            print('Evaluating on the valid data')
+            #print('Evaluating on the valid data')
             if args.train_mode == 'Joint':
                 valid_target_data = (corpus.pos_valid, corpus.chunk_valid, corpus.ner_valid, )
             elif args.train_mode == 'POS':
@@ -280,11 +315,11 @@ for i in range(args.test_times):
             print('-'*50)
             if args.train_mode == 'Joint':
                 val_loss = 1.0*val_loss
-                print ("epoch:", epoch)
-                print ("val_loss:", val_loss)
-                print ("accuracy len:", len(accuracy))
-                print ("accuracy0:", accuracy[0])
-                print ("accuracy1:", accuracy[1])
+                #print ("epoch:", epoch)
+                #print ("val_loss:", val_loss)
+                #print ("accuracy len:", len(accuracy))
+                #print ("accuracy0:", accuracy[0])
+                #print ("accuracy1:", accuracy[1])
                 accuracy0 = 1.0*accuracy[0]
                 accuracy1 = 1.0*accuracy[1]
                 print('| end of epoch {:3d} | valid loss {:5.3f} | POS accuracy {:5.3f} | Chunk accuracy {:5.3}'.format(
@@ -292,7 +327,7 @@ for i in range(args.test_times):
                 ))
             else:
                 print('| end of epoch {:3d} | valid loss {:5.3f} | accuracy {:5.3f} |'.format(
-                    epoch, val_loss.data.cpu().numpy(), accuracy
+                    epoch, val_loss.item(), accuracy.item()
                 ))
             if not best_val_loss or (val_loss.item() < best_val_loss):
                 with open(args.save.strip() + '.pt', 'wb') as f:
@@ -335,7 +370,7 @@ for i in range(args.test_times):
         ))
     else:
         print('| end of epoch {:3d} | test loss {:5.3f} | accuracy {:5.3f} |'.format(
-            epoch, test_loss.item(), test_accuracy
+            epoch, test_loss.item(), test_accuracy.item()
         ))
     
     # Log Accuracy
