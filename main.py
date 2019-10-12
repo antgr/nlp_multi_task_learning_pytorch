@@ -163,7 +163,7 @@ def train(loss_log):
                     print ("param: ", param.shape)
                     if hasattr(param, 'auxiliary_grad'):
                         if param.grad is not None:
-                            alpha = 0.7
+                            alpha = 0.01
                             if alpha != 1:
                                 if hasattr(param, 'smoothed_primary_grad'):
                                     param.smoothed_primary_grad *= (1 - alpha)
@@ -213,7 +213,7 @@ def train(loss_log):
                     print ("param: ", param.shape)
                     if hasattr(param, 'auxiliary_grad'):
                         if param.grad is not None:
-                            alpha = 0.7
+                            alpha = 0.01
                             if alpha != 1:
                                 if hasattr(param, 'smoothed_primary_grad'):
                                     param.smoothed_primary_grad *= (1 - alpha)
