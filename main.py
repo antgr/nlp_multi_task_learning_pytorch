@@ -71,6 +71,42 @@ else:
     torch.save(corpus, corpus_path)
 
 
+def censored_vector(u, v, mode='Projection'):
+    """Adjusts the auxiliary loss gradient
+    Adjusts the auxiliary loss gradient before adding it to the primary loss
+    gradient and using a gradient descent-based method
+    Args:
+    u: A Torch variable representing the auxiliary loss gradient
+    v: A Torch variable representing the primary loss gradient
+    mode: The method used for the adjustment:
+      - Single task: the auxiliary loss gradient is ignored
+      - Multitask: the auxiliary loss gradient is kept as it is
+      - Unweighted cosine: cf. https://arxiv.org/abs/1812.02224
+      - Weighted cosine: cf. https://arxiv.org/abs/1812.02224
+      - Projection: cf. https://github.com/vivien000/auxiliary-learning
+      - Parameter-wise: same as projection but at the level of each parameter
+    Returns:
+    A tensorflow variable representing the adjusted auxiliary loss gradient
+    """
+    if mode == 'Single task' or u is None:
+        return 0
+    if mode == 'Multitask' or v is None:
+        return u
+    l_u, l_v = torch.norm(u), torch.norm(v)
+    if l_u.cpu().numpy() == 0 or l_v.cpu().numpy() == 0:
+        return u
+    u_dot_v = (u*v).sum()
+    if mode == 'Unweighted cosine':
+        return u if u_dot_v > 0 else torch.zeros_like(u)
+    if mode == 'Weighted cosine':
+        return torch.max(u_dot_v, torch.tensor(0.).cuda())*u/l_u/l_v
+    if mode == 'Projection':
+        return u - torch.min(u_dot_v, torch.tensor(0.).cuda())*v/l_v/l_v
+    if mode == 'Parameter-wise':
+        return u*((torch.sign(u*v)+1)/2)
+
+
+
 ###############################################################################
 # Training Functions
 ###############################################################################
@@ -105,6 +141,47 @@ def train(loss_log):
                 print ("Joint in same layer")
                 hidden = model.rnn.init_hidden(args.batch_size)
                 outputs1, outputs2, outputs3, hidden = model(X, hidden)
+
+
+                #The following part of code is based on viviens fork: 
+                #https://github.com/vivien000/nlp_multi_task_learning_pytorch/blob/master/main.py
+                auxiliary_loss = 0.2*criterion(outputs1.view(-1, npos_tags), ys[0].view(-1))
+                auxiliary_loss += 0.3*criterion(outputs2.view(-1, nchunk_tags), ys[1].view(-1))
+                primary_loss = criterion(outputs3.view(-1, nner_tags), ys[2].view(-1))
+                loss = auxiliary_loss + primary_loss
+
+
+                print ("auxiliary_loss: ", auxiliary_loss)
+                auxiliary_loss.backward(retain_graph=True)
+                for param in model.parameters():
+                    if param.grad is not None:
+                        param.auxiliary_grad = param.grad.detach().clone()
+                        param.grad = None
+
+                primary_loss.backward(retain_graph=False)
+                for param in model.parameters():
+                    print ("param: ", param.shape)
+                    if hasattr(param, 'auxiliary_grad'):
+                        if param.grad is not None:
+                            alpha = 0.7
+                            if alpha != 1:
+                                if hasattr(param, 'smoothed_primary_grad'):
+                                    param.smoothed_primary_grad *= (1 - alpha)
+                                    param.smoothed_primary_grad.add_(alpha*param.grad.detach().clone())
+                                    print ("param.smoothed_primary_grad: ", param.smoothed_primary_grad.shape)
+                                else:
+                                    param.smoothed_primary_grad = alpha*param.grad.detach().clone()
+                                    print ("param.auxiliary_grad: ", param.auxiliary_grad.shape)
+                                    print ("param.smoothed_primary_grad: " , param.smoothed_primary_grad.shape)
+                                    param.grad.add_(censored_vector(param.auxiliary_grad, param.smoothed_primary_grad))
+                                    print ("param.grad: ", param.grad.shape)
+                            else:
+                                param.grad.add_(censored_vector(param.auxiliary_grad, param.grad.shape))
+                                print ("param.grad: ", param.grad.shape)
+                        else:
+                            param.grad = param.auxiliary_grad.clone()
+                            print ("param.grad: ", param.grad.shape)
+                        del param.auxiliary_grad
             else:
                 print ("Joint in different layers")
                 hidden1 = model.rnn1.init_hidden(args.batch_size)
@@ -115,6 +192,51 @@ def train(loss_log):
                 print("init hidden3:", hidden3[0].shape, hidden3[1].shape )
                 outputs1, outputs2, outputs3,  hidden1, hidden2, hidden3 = model(X, hidden1, hidden2, hidden3)
                 print ("returned: outputs1, outputs2, outputs3, hidden1, hidden2, hidden3")
+
+                #The following part of code is based on viviens fork: 
+                #https://github.com/vivien000/nlp_multi_task_learning_pytorch/blob/master/main.py
+                auxiliary_loss = 0.2*criterion(outputs1.view(-1, npos_tags), ys[0].view(-1))
+                auxiliary_loss += 0.3*criterion(outputs2.view(-1, nchunk_tags), ys[1].view(-1))
+                primary_loss = criterion(outputs3.view(-1, nner_tags), ys[2].view(-1))
+                loss = auxiliary_loss + primary_loss
+
+                
+                print ("auxiliary_loss: ", auxiliary_loss)
+                auxiliary_loss.backward(retain_graph=True)
+                for param in model.parameters():
+                    if param.grad is not None:
+                        param.auxiliary_grad = param.grad.detach().clone()
+                        param.grad = None
+
+                primary_loss.backward(retain_graph=False)
+                for param in model.parameters():
+                    print ("param: ", param.shape)
+                    if hasattr(param, 'auxiliary_grad'):
+                        if param.grad is not None:
+                            alpha = 0.7
+                            if alpha != 1:
+                                if hasattr(param, 'smoothed_primary_grad'):
+                                    param.smoothed_primary_grad *= (1 - alpha)
+                                    param.smoothed_primary_grad.add_(alpha*param.grad.detach().clone())
+                                    print ("param.smoothed_primary_grad: ", param.smoothed_primary_grad.shape)
+                                else:
+                                    param.smoothed_primary_grad = alpha*param.grad.detach().clone()
+                                    print ("param.auxiliary_grad: ", param.auxiliary_grad.shape)
+                                    print ("param.smoothed_primary_grad: " , param.smoothed_primary_grad.shape)
+                                    param.grad.add_(censored_vector(param.auxiliary_grad, param.smoothed_primary_grad))
+                                    print ("param.grad: ", param.grad.shape)
+                            else:
+                                param.grad.add_(censored_vector(param.auxiliary_grad, param.grad.shape))
+                                print ("param.grad: ", param.grad.shape)
+                        else:
+                            param.grad = param.auxiliary_grad.clone()
+                            print ("param.grad: ", param.grad.shape)
+                        del param.auxiliary_grad
+            
+
+
+
+            """
             loss1 = criterion(outputs1.view(-1, npos_tags), ys[0].view(-1))
             print ("outputs1.view(-1, npos_tags):", outputs1.view(-1, npos_tags).shape)
             print ("ys[0].view(-1):", ys[0].view(-1).shape)
@@ -125,6 +247,7 @@ def train(loss_log):
             print ("loss3:", loss3)
             loss = loss1 + loss2 + loss3
             print ("loss:", loss)
+            """
         else:
             #print ("Not Joint")
             hidden = model.rnn.init_hidden(args.batch_size)
@@ -135,7 +258,10 @@ def train(loss_log):
             if iteration % args.log_interval == 0:
                 print ("loss:", loss)
 
-        loss.backward() 
+        if True:
+            pass
+        else:
+            loss.backward() 
         
         # Prevent the exploding gradient
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
@@ -176,7 +302,8 @@ def evaluate(source, target):
             loss2 = criterion(outputs2.view(-1, nchunk_tags), y_vals[1].view(-1))
             loss3 = criterion(outputs3.view(-1, nner_tags), y_vals[2].view(-1))
 
-            loss = loss1 + loss2 + loss3
+            #loss = loss1 + loss2 + loss3
+            loss = loss3
             # Make predict and calculate accuracy
             _, pred1 = outputs1.data.topk(1)
             _, pred2 = outputs2.data.topk(1)
