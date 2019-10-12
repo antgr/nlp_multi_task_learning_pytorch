@@ -200,7 +200,7 @@ def evaluate(source, target):
             outputs, hidden = model(X_val, hidden)
             loss = criterion(outputs.view(-1, ntags), y_vals[0].view(-1))
             _, pred = outputs.data.topk(1)
-            accuracy = torch.sum(pred.squeeze(2) == y_vals[0].data) / (y_vals[0].size(0) * y_vals[0].size(1))
+            accuracy = torch.sum(pred.squeeze(2) == y_vals[0].data).item() / (y_vals[0].size(0) * y_vals[0].size(1))
             print ("evaluate/accuracy:", accuracy)
         total_loss += loss
     print ("end evaluate")
