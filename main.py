@@ -70,6 +70,20 @@ else:
     corpus = Corpus(args.data)
     torch.save(corpus, corpus_path)
 
+npos_tags = corpus.pos_dict.nwords
+nner_tags = corpus.ner_dict.nwords
+nchunk_tags = corpus.chunk_dict.nwords
+
+log_var_a = torch.zeros((npos_tags,), requires_grad=True, device="cuda")
+log_var_b = torch.zeros((nchunk_tags,), requires_grad=True, device="cuda")
+log_var_c = torch.zeros((nner_tags,), requires_grad=True, device="cuda")
+
+std_1 = torch.exp(log_var_a)**0.5
+std_2 = torch.exp(log_var_b)**0.5
+std_3 = torch.exp(log_var_c)**0.5
+
+#params = ([p for p in model.parameters()] + [log_var_a] + [log_var_b] + [log_var_c])
+#optimizer = optim.Adam(params, lr=args.lr)
 
 ###############################################################################
 # Training Functions
@@ -123,8 +137,26 @@ def train(loss_log):
             print ("loss2:", loss2)
             loss3 = criterion(outputs3.view(-1, nner_tags), ys[2].view(-1))
             print ("loss3:", loss3)
-            loss = loss1 + loss2 + loss3
-            print ("loss:", loss)
+            loss = loss1 + loss2 + 10*loss3
+            print (" [training] == before == loss: ", loss) 
+            loss = 0
+            #print ("loss:", loss)
+
+            ### experimental change ###
+            y_true= [ys[0].view(-1), ys[1].view(-1), ys[2].view(-1)]
+            y_pred = [outputs1.view(-1, npos_tags), outputs2.view(-1, nchunk_tags), outputs3.view(-1, nner_tags)]
+            log_vars = [log_var_a, log_var_b, log_var_c]
+            losses = [loss1, loss2, loss3]
+
+            for i in range(len(y_pred)):
+                precision = torch.exp(-log_vars[i])
+                #diff = (y_pred[i]-y_true[i])**2.
+                diff = losses[i]
+                loss += torch.sum(precision * diff + log_vars[i], -1)
+                loss = torch.mean(loss)
+            loss = loss.cuda()
+            print (" [training] == after == loss: ", loss)
+
         else:
             #print ("Not Joint")
             hidden = model.rnn.init_hidden(args.batch_size)
@@ -176,7 +208,28 @@ def evaluate(source, target):
             loss2 = criterion(outputs2.view(-1, nchunk_tags), y_vals[1].view(-1))
             loss3 = criterion(outputs3.view(-1, nner_tags), y_vals[2].view(-1))
 
-            loss = loss1 + loss2 + loss3
+            loss = loss1 + loss2 + 10*loss3
+            print ("[evaluate] == before == loss:", loss)
+            ####experimental change
+            loss = 0
+            #print ("loss:", loss)
+
+            ### experimental change ###
+            y_true= [y_vals[0].view(-1), y_vals[1].view(-1), y_vals[2].view(-1)]
+            y_pred = [outputs1.view(-1, npos_tags), outputs2.view(-1, nchunk_tags), outputs3.view(-1, nner_tags)]
+            log_vars = [log_var_a, log_var_b, log_var_c]
+            losses = [loss1, loss2, loss3]
+
+            for i in range(len(y_pred)):
+                precision = torch.exp(-log_vars[i])
+                #diff = (y_pred[i]-y_true[i])**2.
+                diff = losses[i]
+                loss += torch.sum(precision * diff + log_vars[i], -1)
+                loss = torch.mean(loss)
+            loss = loss.cuda()
+            print ("[evaluate] == after == loss: ", loss)
+
+
             # Make predict and calculate accuracy
             _, pred1 = outputs1.data.topk(1)
             _, pred2 = outputs2.data.topk(1)
@@ -219,6 +272,7 @@ for i in range(args.test_times):
     npos_tags = corpus.pos_dict.nwords
     nner_tags = corpus.ner_dict.nwords
     nchunk_tags = corpus.chunk_dict.nwords
+
     pretrained_embeddings = None
     if args.pretrained_embeddings:
         import torchtext
@@ -249,8 +303,14 @@ for i in range(args.test_times):
     if args.cuda:
         model = model.cuda()
 
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+
+    #optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
+
+
+    params = ([p for p in model.parameters()] + [log_var_a] + [log_var_b] + [log_var_c])
+    #print ("params: ", nparray(params).shape)
+    optimizer = optim.Adam(params, lr=args.lr)
 
     # Loop over epochs
     best_val_loss = None
